@@ -1,0 +1,23 @@
+# Node modules
+node_modules/
+
+# Build output
+main.js
+*.js.map
+
+# Obsidian
+.obsidian/
+*.md.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

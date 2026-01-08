@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-ai-agent",
+  "name": "Obsidian AI Agent",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "在 Obsidian 中集成 DeepSeek 和智谱 AI，支持多种 AI 功能",
+  "author": "Your Name",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
