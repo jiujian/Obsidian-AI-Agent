@@ -1,5 +1,5 @@
 // AI 提供商类型
-export type AIProviderType = 'deepseek' | 'zhipu';
+export type AIProviderType = 'deepseek' | 'zhipu' | 'openai' | 'kimi';
 
 // 结果插入位置
 export type InsertPosition = 'cursor' | 'below-selection' | 'new-file';
@@ -48,6 +48,7 @@ export interface PromptTemplate {
   name: string;
   content: string;
   isBuiltIn: boolean;
+  enabled: boolean; // 是否启用（仅对内置模板有效）
 }
 
 // 插件配置
@@ -60,8 +61,21 @@ export interface AIAgentSettings {
   
   // 智谱 AI 配置
   zhipuApiKey: string;
+  zhipuBaseUrl: string; // 智谱 Base URL
   zhipuModels: ModelInfo[];
   zhipuCustomModels: ModelInfo[]; // 自定义智谱 AI 模型
+  
+  // OpenAI 配置
+  openaiApiKey: string;
+  openaiBaseUrl: string; // OpenAI Base URL（支持自定义代理）
+  openaiModels: ModelInfo[];
+  openaiCustomModels: ModelInfo[]; // 自定义 OpenAI 模型
+  
+  // Kimi 配置
+  kimiApiKey: string;
+  kimiBaseUrl: string; // Kimi Base URL
+  kimiModels: ModelInfo[];
+  kimiCustomModels: ModelInfo[]; // 自定义 Kimi 模型
   
   // 默认设置
   defaultProvider: AIProviderType;
@@ -78,6 +92,7 @@ export interface AIAgentSettings {
   
   // Prompt 模板
   promptTemplates: PromptTemplate[];
+  showDefaultTemplates: boolean; // 是否显示默认 Prompt 模板
   
   // 日志设置
   enableLogging: boolean;

@@ -42,22 +42,24 @@ echo.
 REM 安装依赖
 echo [3/3] 安装依赖并构建插件...
 echo.
-echo 正在运行: npm install
+echo 正在运行: npm install...
 call npm install
 if %errorlevel% neq 0 (
     echo.
     echo ❌ 依赖安装失败
+    echo.
     pause
     exit /b 1
 )
 echo.
 echo ✓ 依赖安装成功
 echo.
-echo 正在运行: npm run build
+echo 正在运行: npm run build...
 call npm run build
 if %errorlevel% neq 0 (
     echo.
     echo ❌ 构建失败
+    echo.
     pause
     exit /b 1
 )
@@ -74,4 +76,5 @@ echo 1. 将 main.js 和 manifest.json 复制到你的 Obsidian vault
 echo 2. 路径：你的vault\.obsidian\plugins\obsidian-ai-agent\
 echo 3. 在 Obsidian 设置中启用插件
 echo.
-pause
+echo 按任意键退出...
+pause >nul

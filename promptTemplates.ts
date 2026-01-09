@@ -2,64 +2,74 @@ import { PromptTemplate } from './types';
 
 export const BUILTIN_PROMPTS: PromptTemplate[] = [
   {
-    id: 'summary',
-    name: '总结',
-    content: '请对以下内容进行简洁的总结，提取关键要点：\n\n{{content}}',
-    isBuiltIn: true
-  },
-  {
-    id: 'bullet-points',
-    name: '要点提取',
-    content: '请将以下内容整理成清晰的要点列表：\n\n{{content}}',
-    isBuiltIn: true
-  },
-  {
-    id: 'translate-to-cn',
-    name: '翻译为中文',
-    content: '请将以下内容翻译为流畅的中文：\n\n{{content}}',
-    isBuiltIn: true
-  },
-  {
-    id: 'translate-to-en',
-    name: '翻译为英文',
-    content: 'Please translate the following content to fluent English:\n\n{{content}}',
-    isBuiltIn: true
-  },
-  {
-    id: 'rewrite',
-    name: '改写/润色',
-    content: '请改写和润色以下内容，使其更加清晰、流畅和专业：\n\n{{content}}',
-    isBuiltIn: true
-  },
-  {
-    id: 'explain-code',
-    name: '代码解释',
-    content: '请详细解释以下代码的功能和逻辑：\n\n{{content}}',
-    isBuiltIn: true
+    id: 'summarize',
+    name: '总结内容',
+    content: '请总结以下内容：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
   },
   {
     id: 'expand',
     name: '扩展内容',
-    content: '请对以下内容进行扩展，增加更多细节和深度：\n\n{{content}}',
-    isBuiltIn: true
+    content: '请扩展以下内容，添加更多细节：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
+  },
+  {
+    id: 'rewrite',
+    name: '重写内容',
+    content: '请重写以下内容，使其更清晰易读：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
+  },
+  {
+    id: 'translate',
+    name: '翻译内容',
+    content: '请将以下内容翻译成英文：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
+  },
+  {
+    id: 'analyze',
+    name: '分析内容',
+    content: '请分析以下内容，提取关键点和结论：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
+  },
+  {
+    id: 'qa',
+    name: '问答',
+    content: '请根据以下内容回答问题：\n\n{{content}}\n\n问题：',
+    isBuiltIn: true,
+    enabled: true
+  },
+  {
+    id: 'code-review',
+    name: '代码审查',
+    content: '请审查以下代码，提出改进建议：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
   },
   {
     id: 'simplify',
     name: '简化内容',
     content: '请将以下内容简化，使其更容易理解：\n\n{{content}}',
-    isBuiltIn: true
+    isBuiltIn: true,
+    enabled: true
   },
   {
     id: 'fix-grammar',
     name: '语法修正',
     content: '请检查并修正以下内容的语法和拼写错误：\n\n{{content}}',
-    isBuiltIn: true
+    isBuiltIn: true,
+    enabled: true
   },
   {
-    id: 'keywords',
-    name: '关键词提取',
-    content: '请从以下内容中提取关键词：\n\n{{content}}',
-    isBuiltIn: true
+    id: 'format',
+    name: '格式化',
+    content: '请格式化以下内容：\n\n{{content}}',
+    isBuiltIn: true,
+    enabled: true
   }
 ];
 

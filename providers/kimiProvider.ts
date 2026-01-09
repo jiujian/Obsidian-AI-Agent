@@ -1,12 +1,12 @@
 import { IAIProvider, AIRequest, AIResponse } from '../types';
 
-export class ZhipuProvider implements IAIProvider {
-  name = '智谱 AI';
-  type = 'zhipu' as const;
+export class KimiProvider implements IAIProvider {
+  name = 'Kimi';
+  type = 'kimi' as const;
   
   constructor(
     private apiKey: string,
-    private baseUrl: string = 'https://open.bigmodel.cn/api/paas/v4'
+    private baseUrl: string = 'https://api.moonshot.cn/v1'
   ) {}
   
   async call(request: AIRequest): Promise<AIResponse> {
@@ -47,7 +47,7 @@ export class ZhipuProvider implements IAIProvider {
       
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`智谱 AI API 错误: ${response.status} - ${errorText}`);
+        throw new Error(`Kimi API 错误: ${response.status} - ${errorText}`);
       }
       
       const data = await response.json();
@@ -62,9 +62,9 @@ export class ZhipuProvider implements IAIProvider {
       };
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`智谱 AI API 调用失败: ${error.message}`);
+        throw new Error(`Kimi API 调用失败: ${error.message}`);
       }
-      throw new Error('智谱 AI API 调用失败: 未知错误');
+      throw new Error('Kimi API 调用失败: 未知错误');
     }
   }
 }

@@ -12,6 +12,8 @@ import {
 } from './types';
 import { DeepSeekProvider } from './providers/deepseekProvider';
 import { ZhipuProvider } from './providers/zhipuProvider';
+import { OpenAIProvider } from './providers/openaiProvider';
+import { KimiProvider } from './providers/kimiProvider';
 import { BUILTIN_PROMPTS, expandTemplate } from './promptTemplates';
 
 const DEFAULT_SETTINGS: AIAgentSettings = {
@@ -26,11 +28,30 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   
   // 智谱 AI 配置
   zhipuApiKey: '',
+  zhipuBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
   zhipuModels: [
     { id: 'glm-4', name: 'GLM-4', provider: 'zhipu', enabled: true },
     { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: 'zhipu', enabled: true }
   ],
   zhipuCustomModels: [], // 自定义智谱 AI 模型
+  
+  // OpenAI 配置
+  openaiApiKey: '',
+  openaiBaseUrl: 'https://api.openai.com/v1',
+  openaiModels: [
+    { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', enabled: true },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', enabled: true }
+  ],
+  openaiCustomModels: [], // 自定义 OpenAI 模型
+  
+  // Kimi 配置
+  kimiApiKey: '',
+  kimiBaseUrl: 'https://api.moonshot.cn/v1',
+  kimiModels: [
+    { id: 'moonshot-v1-8k', name: 'Moonshot V1 8K', provider: 'kimi', enabled: true },
+    { id: 'moonshot-v1-32k', name: 'Moonshot V1 32K', provider: 'kimi', enabled: true }
+  ],
+  kimiCustomModels: [], // 自定义 Kimi 模型
   
   // 默认设置
   defaultProvider: 'deepseek',
@@ -46,7 +67,8 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   insertFormat: 'markdown',
   
   // Prompt 模板
-  promptTemplates: [...BUILTIN_PROMPTS],
+  promptTemplates: [...BUILTIN_PROMPTS.map(p => ({...p, enabled: true}))],
+  showDefaultTemplates: true, // 已废弃，保留用于兼容
   
   // 日志设置
   enableLogging: true
@@ -97,6 +119,14 @@ export default class AIAgentPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    
+    // 确保模板的 enabled 字段存在（兼容旧版本）
+    this.settings.promptTemplates.forEach(template => {
+      if (template.enabled === undefined) {
+        template.enabled = true;
+      }
+    });
+    
     this.callLogs = this.settings.enableLogging ? [] : [];
   }
 
@@ -167,7 +197,13 @@ export default class AIAgentPlugin extends Plugin {
         providerInstance = new DeepSeekProvider(this.settings.deepseekApiKey, this.settings.deepseekBaseUrl);
         break;
       case 'zhipu':
-        providerInstance = new ZhipuProvider(this.settings.zhipuApiKey);
+        providerInstance = new ZhipuProvider(this.settings.zhipuApiKey, this.settings.zhipuBaseUrl);
+        break;
+      case 'openai':
+        providerInstance = new OpenAIProvider(this.settings.openaiApiKey, this.settings.openaiBaseUrl);
+        break;
+      case 'kimi':
+        providerInstance = new KimiProvider(this.settings.kimiApiKey, this.settings.kimiBaseUrl);
         break;
       default:
         throw new Error(`不支持的提供商: ${provider}`);
@@ -233,9 +269,26 @@ export default class AIAgentPlugin extends Plugin {
   // 测试 API 连接
   async testConnection(provider: AIProviderType): Promise<boolean> {
     try {
+      let modelId = 'deepseek-chat';
+      
+      switch (provider) {
+        case 'deepseek':
+          modelId = 'deepseek-chat';
+          break;
+        case 'zhipu':
+          modelId = 'glm-4';
+          break;
+        case 'openai':
+          modelId = 'gpt-4o-mini';
+          break;
+        case 'kimi':
+          modelId = 'moonshot-v1-8k';
+          break;
+      }
+
       const request: AIRequest = {
         prompt: '你好',
-        modelId: provider === 'deepseek' ? 'deepseek-chat' : 'glm-4',
+        modelId: modelId,
         provider,
         maxTokens: 10
       };
@@ -262,7 +315,13 @@ class AddCustomModelModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
-    const providerName = this.providerType === 'deepseek' ? 'DeepSeek' : '智谱 AI';
+    const providerNames: Record<AIProviderType, string> = {
+      'deepseek': 'DeepSeek',
+      'zhipu': '智谱 AI',
+      'openai': 'OpenAI',
+      'kimi': 'Kimi'
+    };
+    const providerName = providerNames[this.providerType];
     
     contentEl.createEl('h2', { text: `添加 ${providerName} 自定义模型` });
 
@@ -331,10 +390,19 @@ class AddCustomModelModal extends Modal {
         enabled: true
       };
 
-      if (this.providerType === 'deepseek') {
-        this.plugin.settings.deepseekCustomModels.push(newModel);
-      } else {
-        this.plugin.settings.zhipuCustomModels.push(newModel);
+      switch (this.providerType) {
+        case 'deepseek':
+          this.plugin.settings.deepseekCustomModels.push(newModel);
+          break;
+        case 'zhipu':
+          this.plugin.settings.zhipuCustomModels.push(newModel);
+          break;
+        case 'openai':
+          this.plugin.settings.openaiCustomModels.push(newModel);
+          break;
+        case 'kimi':
+          this.plugin.settings.kimiCustomModels.push(newModel);
+          break;
       }
 
       this.plugin.saveSettings();
@@ -352,6 +420,8 @@ class AddCustomModelModal extends Modal {
 
 // Prompt 选择模态框
 class PromptSelectionModal extends Modal {
+  private loadingNotice: Notice | null = null;
+
   constructor(
     app: any,
     private plugin: AIAgentPlugin,
@@ -372,8 +442,10 @@ class PromptSelectionModal extends Modal {
     buttonContainer.style.gap = '10px';
     buttonContainer.style.marginTop = '20px';
 
-    // 添加 Prompt 按钮
-    this.plugin.settings.promptTemplates.forEach(template => {
+    // 添加 Prompt 按钮 - 只显示启用的模板
+    const visibleTemplates = this.plugin.settings.promptTemplates.filter(t => t.enabled);
+
+    visibleTemplates.forEach(template => {
       const btn = buttonContainer.createEl('button', { text: template.name });
       btn.style.padding = '10px';
       btn.style.cursor = 'pointer';
@@ -392,8 +464,17 @@ class PromptSelectionModal extends Modal {
     customInput.style.height = '100px';
     customInput.style.marginTop = '20px';
 
-    const submitBtn = contentEl.createEl('button', { text: '提交' });
-    submitBtn.style.marginTop = '10px';
+    // 提交按钮容器
+    const submitContainer = contentEl.createDiv();
+    submitContainer.style.display = 'flex';
+    submitContainer.style.alignItems = 'center';
+    submitContainer.style.gap = '10px';
+    submitContainer.style.marginTop = '10px';
+
+    const submitBtn = submitContainer.createEl('button', { 
+      text: '提交',
+      cls: 'mod-cta'
+    });
     submitBtn.style.padding = '10px 20px';
     submitBtn.onclick = () => {
       const customPrompt = customInput.value.trim();
@@ -402,6 +483,29 @@ class PromptSelectionModal extends Modal {
       }
       this.close();
     };
+
+    // 添加快捷键提示
+    const shortcutHint = submitContainer.createEl('span', { 
+      text: 'Ctrl+Enter 提交',
+      cls: 'ai-shortcut-hint'
+    });
+    shortcutHint.style.fontSize = '0.85em';
+    shortcutHint.style.color = 'var(--text-muted)';
+
+    // 绑定 Ctrl+Enter 快捷键
+    customInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        const customPrompt = (e.target as HTMLTextAreaElement).value.trim();
+        if (customPrompt) {
+          this.processWithCustomPrompt(customPrompt);
+          this.close();
+        }
+      }
+    });
+
+    // 自动聚焦到输入框
+    setTimeout(() => customInput.focus(), 100);
   }
 
   async processWithPrompt(template: PromptTemplate) {
@@ -417,7 +521,8 @@ class PromptSelectionModal extends Modal {
     const activeFile = plugin.app.workspace.getActiveFile();
 
     try {
-      new Notice('正在调用 AI...', 2000);
+      // 显示持续连接提示
+      this.loadingNotice = new Notice('正在连接 AI，请稍候...', 0);
 
       const expandedPrompt = expandTemplate(
         prompt,
@@ -432,6 +537,12 @@ class PromptSelectionModal extends Modal {
         plugin.settings.defaultProvider,
         plugin.settings.defaultModel
       );
+
+      // 关闭加载提示
+      if (this.loadingNotice) {
+        this.loadingNotice.hide();
+        this.loadingNotice = null;
+      }
 
       // 记录日志
       if (plugin.settings.enableLogging) {
@@ -453,11 +564,24 @@ class PromptSelectionModal extends Modal {
       new Notice('AI 处理完成');
     } catch (error) {
       console.error('AI 调用失败:', error);
+      
+      // 关闭加载提示
+      if (this.loadingNotice) {
+        this.loadingNotice.hide();
+        this.loadingNotice = null;
+      }
+      
       new Notice(`AI 调用失败: ${error.message}`);
     }
   }
 
   onClose() {
+    // 关闭加载提示
+    if (this.loadingNotice) {
+      this.loadingNotice.hide();
+      this.loadingNotice = null;
+    }
+    
     const { contentEl } = this;
     contentEl.empty();
   }
@@ -599,6 +723,17 @@ class AIAgentSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName('Base URL')
+      .setDesc('智谱 AI 基础 URL（支持私有代理）')
+      .addText(text => text
+        .setPlaceholder('https://open.bigmodel.cn/api/paas/v4')
+        .setValue(this.plugin.settings.zhipuBaseUrl)
+        .onChange(async (value) => {
+          this.plugin.settings.zhipuBaseUrl = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
       .setName('测试连接')
       .addButton(button => button
         .setButtonText('测试')
@@ -617,6 +752,94 @@ class AIAgentSettingTab extends PluginSettingTab {
     // 智谱 AI 模型管理
     this.addZhipuModelSection(containerEl);
 
+    // OpenAI 配置
+    containerEl.createEl('h2', { text: 'OpenAI 配置' });
+    
+    new Setting(containerEl)
+      .setName('API Key')
+      .setDesc('OpenAI API Key')
+      .addText(text => text
+        .setPlaceholder('sk-...')
+        .setValue(this.plugin.settings.openaiApiKey)
+        .onChange(async (value) => {
+          this.plugin.settings.openaiApiKey = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Base URL')
+      .setDesc('OpenAI API 基础 URL（支持自定义代理）')
+      .addText(text => text
+        .setPlaceholder('https://api.openai.com/v1')
+        .setValue(this.plugin.settings.openaiBaseUrl)
+        .onChange(async (value) => {
+          this.plugin.settings.openaiBaseUrl = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('测试连接')
+      .addButton(button => button
+        .setButtonText('测试')
+        .setClass('mod-cta')
+        .onClick(async () => {
+          button.setButtonText('测试中...');
+          const success = await this.plugin.testConnection('openai');
+          if (success) {
+            new Notice('OpenAI 连接成功！');
+          } else {
+            new Notice('OpenAI 连接失败，请检查 API Key');
+          }
+          button.setButtonText('测试');
+        }));
+
+    // OpenAI 模型管理
+    this.addOpenAIModelSection(containerEl);
+
+    // Kimi 配置
+    containerEl.createEl('h2', { text: 'Kimi 配置' });
+    
+    new Setting(containerEl)
+      .setName('API Key')
+      .setDesc('Kimi API Key')
+      .addText(text => text
+        .setPlaceholder('sk-...')
+        .setValue(this.plugin.settings.kimiApiKey)
+        .onChange(async (value) => {
+          this.plugin.settings.kimiApiKey = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Base URL')
+      .setDesc('Kimi API 基础 URL（支持私有代理）')
+      .addText(text => text
+        .setPlaceholder('https://api.moonshot.cn/v1')
+        .setValue(this.plugin.settings.kimiBaseUrl)
+        .onChange(async (value) => {
+          this.plugin.settings.kimiBaseUrl = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('测试连接')
+      .addButton(button => button
+        .setButtonText('测试')
+        .setClass('mod-cta')
+        .onClick(async () => {
+          button.setButtonText('测试中...');
+          const success = await this.plugin.testConnection('kimi');
+          if (success) {
+            new Notice('Kimi 连接成功！');
+          } else {
+            new Notice('Kimi 连接失败，请检查 API Key');
+          }
+          button.setButtonText('测试');
+        }));
+
+    // Kimi 模型管理
+    this.addKimiModelSection(containerEl);
+
     // 默认设置
     containerEl.createEl('h2', { text: '默认设置' });
 
@@ -626,6 +849,8 @@ class AIAgentSettingTab extends PluginSettingTab {
       .addDropdown(dropdown => dropdown
         .addOption('deepseek', 'DeepSeek')
         .addOption('zhipu', '智谱 AI')
+        .addOption('openai', 'OpenAI')
+        .addOption('kimi', 'Kimi')
         .setValue(this.plugin.settings.defaultProvider)
         .onChange(async (value) => {
           this.plugin.settings.defaultProvider = value as AIProviderType;
@@ -640,7 +865,11 @@ class AIAgentSettingTab extends PluginSettingTab {
           ...this.plugin.settings.deepseekModels,
           ...this.plugin.settings.deepseekCustomModels,
           ...this.plugin.settings.zhipuModels,
-          ...this.plugin.settings.zhipuCustomModels
+          ...this.plugin.settings.zhipuCustomModels,
+          ...this.plugin.settings.openaiModels,
+          ...this.plugin.settings.openaiCustomModels,
+          ...this.plugin.settings.kimiModels,
+          ...this.plugin.settings.kimiCustomModels
         ];
         allModels.forEach(model => {
           dropdown.addOption(model.id, `${model.name} (${model.provider})`);
@@ -709,14 +938,24 @@ class AIAgentSettingTab extends PluginSettingTab {
 
     // Prompt 模板管理
     containerEl.createEl('h2', { text: 'Prompt 模板' });
-    
+
     this.plugin.settings.promptTemplates.forEach((template, index) => {
       const setting = new Setting(containerEl);
       
       if (template.isBuiltIn) {
+        // 内置模板：显示名称、内容和独立开关
         setting.setName(template.name);
         setting.setDesc(template.content.substring(0, 50) + '...');
+        
+        // 添加独立开关按钮
+        setting.addToggle(toggle => toggle
+          .setValue(template.enabled)
+          .onChange(async (value) => {
+            this.plugin.settings.promptTemplates[index].enabled = value;
+            await this.plugin.saveSettings();
+          }));
       } else {
+        // 自定义模板：显示名称和删除按钮
         setting.setName(template.name);
         setting.addExtraButton(button => button
           .setIcon('trash')
@@ -745,7 +984,8 @@ class AIAgentSettingTab extends PluginSettingTab {
             id: 'custom-' + Date.now(),
             name,
             content,
-            isBuiltIn: false
+            isBuiltIn: false,
+            enabled: true
           });
           this.plugin.saveSettings();
           this.display();
@@ -851,5 +1091,93 @@ class AIAgentSettingTab extends PluginSettingTab {
             this.display();
           }).open();
         }));
+  }
+
+  // OpenAI 模型管理部分
+  private addOpenAIModelSection(containerEl: any) {
+    containerEl.createEl('h3', { text: 'OpenAI 模型' });
+    
+    // 内置模型列表
+    this.plugin.settings.openaiModels.forEach(model => {
+      new Setting(containerEl)
+        .setName(model.name)
+        .setDesc(`ID: ${model.id}（内置）`)
+        .addExtraButton(button => button
+          .setIcon('info')
+          .setTooltip('内置模型')
+          .setDisabled(true));
+    });
+    
+    // 自定义模型列表
+    this.plugin.settings.openaiCustomModels.forEach((model, index) => {
+      const setting = new Setting(containerEl);
+      setting.setName(model.name)
+        .setDesc(`ID: ${model.id}（自定义）`)
+        .addExtraButton(button => button
+          .setIcon('trash')
+          .setTooltip('删除')
+          .onClick(async () => {
+            this.plugin.settings.openaiCustomModels.splice(index, 1);
+            await this.plugin.saveSettings();
+            this.display();
+          }));
+    });
+    
+    // 添加自定义模型按钮
+    new Setting(containerEl)
+      .setName('添加 OpenAI 自定义模型')
+      .setDesc('添加新的 OpenAI 模型，API URL 保持不变')
+      .addButton(button => button
+        .setButtonText('添加')
+        .setClass('mod-cta')
+        .onClick(() => {
+          new AddCustomModelModal(this.plugin.app, this.plugin, 'openai', () => {
+            this.display();
+          }).open();
+        }));
+  }
+
+  // Kimi 模型管理部分
+  private addKimiModelSection(containerEl: any) {
+    containerEl.createEl('h3', { text: 'Kimi 模型' });
+    
+    // 内置模型列表
+    this.plugin.settings.kimiModels.forEach(model => {
+      new Setting(containerEl)
+        .setName(model.name)
+        .setDesc(`ID: ${model.id}（内置）`)
+        .addExtraButton(button => button
+          .setIcon('info')
+          .setTooltip('内置模型')
+          .setDisabled(true));
+    });
+    
+    // 自定义模型列表
+    this.plugin.settings.kimiCustomModels.forEach((model, index) => {
+      const setting = new Setting(containerEl);
+      setting.setName(model.name)
+        .setDesc(`ID: ${model.id}（自定义）`)
+        .addExtraButton(button => button
+          .setIcon('trash')
+          .setTooltip('删除')
+          .onClick(async () => {
+            this.plugin.settings.kimiCustomModels.splice(index, 1);
+            await this.plugin.saveSettings();
+            this.display();
+          }));
+    });
+    
+    // 添加自定义模型按钮
+    new Setting(containerEl)
+      .setName('添加 Kimi 自定义模型')
+      .setDesc('添加新的 Kimi 模型，API URL 保持不变')
+      .addButton(button => button
+        .setButtonText('添加')
+        .setClass('mod-cta')
+          .onClick(() => {
+            new AddCustomModelModal(this.plugin.app, this.plugin, 'kimi', () => {
+              this.display();
+            }).open();
+          }));
   }
 }
