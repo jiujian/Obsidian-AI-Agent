@@ -71,15 +71,25 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   showDefaultTemplates: true, // 已废弃，保留用于兼容
   
   // 日志设置
-  enableLogging: true
+  enableLogging: true,
+  
+  // 快捷键设置
+  hotkeyProcessSelection: 'mod+shift+a',
+  hotkeyProcessFile: 'mod+shift+f',
+  hotkeyShowPanel: ''
 };
 
 export default class AIAgentPlugin extends Plugin {
   settings: AIAgentSettings;
   callLogs: CallLog[] = [];
+  private statusBarItem: HTMLElement | null = null;
 
   async onload() {
     await this.loadSettings();
+
+    // 添加状态栏项目
+    this.statusBarItem = this.addStatusBarItem();
+    this.updateStatusBar('AI 就绪');
 
     // 添加功能区图标
     this.addRibbonIcon('bot', 'AI 助手', () => {
@@ -90,20 +100,21 @@ export default class AIAgentPlugin extends Plugin {
     this.addCommand({
       id: 'ai-process-selection',
       name: '使用 AI 处理选中文本',
-      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'a' }],
+      hotkeys: this.parseHotkey(this.settings.hotkeyProcessSelection) as any,
       callback: () => this.processSelection()
     });
 
     this.addCommand({
       id: 'ai-process-file',
       name: '使用 AI 处理当前文件',
-      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'f' }],
+      hotkeys: this.parseHotkey(this.settings.hotkeyProcessFile) as any,
       callback: () => this.processFile()
     });
 
     this.addCommand({
       id: 'ai-show-panel',
       name: '显示 AI 助手面板',
+      hotkeys: this.parseHotkey(this.settings.hotkeyShowPanel) as any,
       callback: () => this.showAIPanel()
     });
 
@@ -115,6 +126,43 @@ export default class AIAgentPlugin extends Plugin {
 
   onunload() {
     console.log('Obsidian AI Agent 插件已卸载');
+    if (this.statusBarItem) {
+      this.statusBarItem.remove();
+    }
+  }
+
+  // 更新状态栏
+  updateStatusBar(message: string) {
+    if (this.statusBarItem) {
+      this.statusBarItem.setText(`AI: ${message}`);
+    }
+  }
+
+  // 解析快捷键字符串
+  parseHotkey(hotkeyStr: string): { modifiers: string[]; key: string }[] | undefined {
+    if (!hotkeyStr) return undefined;
+    
+    const parts = hotkeyStr.toLowerCase().split('+').map(p => p.trim());
+    if (parts.length === 0) return undefined;
+    
+    const key = parts.pop() || '';
+    const modifiers: string[] = [];
+    
+    for (const part of parts) {
+      if (part === 'mod' || part === 'cmd') {
+        modifiers.push('Mod');
+      } else if (part === 'ctrl') {
+        modifiers.push('Ctrl');
+      } else if (part === 'shift') {
+        modifiers.push('Shift');
+      } else if (part === 'alt') {
+        modifiers.push('Alt');
+      }
+    }
+    
+    if (!key) return undefined;
+    
+    return [{ modifiers, key: key.toUpperCase() }];
   }
 
   async loadSettings() {
@@ -154,7 +202,7 @@ export default class AIAgentPlugin extends Plugin {
       return;
     }
 
-    this.showPromptModal(selection, 'selection');
+    this.showAIPanel(selection, 'selection');
   }
 
   // 处理当前文件
@@ -166,17 +214,12 @@ export default class AIAgentPlugin extends Plugin {
     }
 
     const content = await this.app.vault.read(activeFile);
-    this.showPromptModal(content, 'file');
+    this.showAIPanel(content, 'file');
   }
 
-  // 显示 AI 面板
-  showAIPanel() {
-    new AIPanelModal(this.app, this).open();
-  }
-
-  // 显示 Prompt 选择模态框
-  showPromptModal(content: string, source: 'selection' | 'file') {
-    new PromptSelectionModal(this.app, this, content, source).open();
+  // 显示 AI 面板（合并后的统一界面）
+  showAIPanel(content?: string, source?: 'selection' | 'file') {
+    new AIPanelModal(this.app, this, content, source).open();
   }
 
   // 调用 AI
@@ -333,7 +376,8 @@ class AddCustomModelModal extends Modal {
     const modelIdInput = modelIdContainer.createEl('input', { 
       type: 'text',
       placeholder: '例如: deepseek-v3 或 glm-4-plus'
-    });
+    }) as HTMLInputElement;
+    modelIdInput.name = 'model-id';
     modelIdInput.style.width = '100%';
     modelIdInput.style.marginTop = '5px';
     modelIdInput.style.padding = '5px';
@@ -346,7 +390,8 @@ class AddCustomModelModal extends Modal {
     const nameInput = nameContainer.createEl('input', { 
       type: 'text',
       placeholder: '例如: DeepSeek V3 或 GLM-4 Plus'
-    });
+    }) as HTMLInputElement;
+    nameInput.name = 'model-name';
     nameInput.style.width = '100%';
     nameInput.style.marginTop = '5px';
     nameInput.style.padding = '5px';
@@ -418,29 +463,91 @@ class AddCustomModelModal extends Modal {
   }
 }
 
-// Prompt 选择模态框
-class PromptSelectionModal extends Modal {
+// AI 面板模态框（合并后的统一界面）
+class AIPanelModal extends Modal {
+  private content: string;
+  private source: 'selection' | 'file' | undefined;
+  private selectedMode: 'selection' | 'file' = 'selection';
   private loadingNotice: Notice | null = null;
 
   constructor(
     app: any,
     private plugin: AIAgentPlugin,
-    private content: string,
-    private source: 'selection' | 'file'
+    content?: string,
+    source?: 'selection' | 'file'
   ) {
     super(app);
+    this.content = content || '';
+    this.source = source;
+    this.selectedMode = source || 'selection';
   }
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl('h2', { text: '选择 AI 功能' });
+    contentEl.createEl('h2', { text: 'AI 助手' });
+
+    // 模式选择 - Radio Button
+    const modeContainer = contentEl.createDiv({ cls: 'ai-mode-container' });
+    modeContainer.style.marginTop = '20px';
+    modeContainer.style.padding = '10px';
+    modeContainer.style.border = '1px solid var(--background-modifier-border)';
+    modeContainer.style.borderRadius = '4px';
+
+    const modeLabel = modeContainer.createEl('label', { text: '选择处理模式', cls: 'setting-item-name' });
+    modeLabel.style.fontWeight = 'bold';
+    modeLabel.style.display = 'block';
+    modeLabel.style.marginBottom = '10px';
+
+    const radioContainer = modeContainer.createDiv();
+    radioContainer.style.display = 'flex';
+    radioContainer.style.gap = '20px';
+
+    // 选中文本单选框
+    const selectionLabel = radioContainer.createEl('label', { cls: 'ai-radio-label' });
+    selectionLabel.style.display = 'flex';
+    selectionLabel.style.alignItems = 'center';
+    selectionLabel.style.cursor = 'pointer';
+
+    const selectionRadio = selectionLabel.createEl('input', { type: 'radio' }) as HTMLInputElement;
+    selectionRadio.name = 'ai-mode';
+    selectionRadio.checked = this.selectedMode === 'selection';
+    selectionRadio.style.marginRight = '8px';
+    selectionRadio.onclick = () => {
+      this.selectedMode = 'selection';
+    };
+
+    selectionLabel.appendText('处理选中文本');
+
+    // 处理当前文件单选框
+    const fileLabel = radioContainer.createEl('label', { cls: 'ai-radio-label' });
+    fileLabel.style.display = 'flex';
+    fileLabel.style.alignItems = 'center';
+    fileLabel.style.cursor = 'pointer';
+
+    const fileRadio = fileLabel.createEl('input', { type: 'radio' }) as HTMLInputElement;
+    fileRadio.name = 'ai-mode';
+    fileRadio.checked = this.selectedMode === 'file';
+    fileRadio.style.marginRight = '8px';
+    fileRadio.onclick = () => {
+      this.selectedMode = 'file';
+    };
+
+    fileLabel.appendText('处理当前文件');
+
+    // Prompt 模板部分
+    const promptSection = contentEl.createDiv({ cls: 'ai-prompt-section' });
+    promptSection.style.marginTop = '20px';
+
+    const promptLabel = promptSection.createEl('label', { text: '选择 AI 功能', cls: 'setting-item-name' });
+    promptLabel.style.fontWeight = 'bold';
+    promptLabel.style.display = 'block';
+    promptLabel.style.marginBottom = '10px';
 
     // 创建按钮容器
-    const buttonContainer = contentEl.createDiv({ cls: 'ai-button-container' });
+    const buttonContainer = promptSection.createDiv({ cls: 'ai-button-container' });
     buttonContainer.style.display = 'grid';
     buttonContainer.style.gridTemplateColumns = 'repeat(2, 1fr)';
     buttonContainer.style.gap = '10px';
-    buttonContainer.style.marginTop = '20px';
 
     // 添加 Prompt 按钮 - 只显示启用的模板
     const visibleTemplates = this.plugin.settings.promptTemplates.filter(t => t.enabled);
@@ -450,8 +557,7 @@ class PromptSelectionModal extends Modal {
       btn.style.padding = '10px';
       btn.style.cursor = 'pointer';
       btn.onclick = async () => {
-        this.processWithPrompt(template);
-        this.close();
+        await this.processWithPrompt(template);
       };
     });
 
@@ -476,12 +582,11 @@ class PromptSelectionModal extends Modal {
       cls: 'mod-cta'
     });
     submitBtn.style.padding = '10px 20px';
-    submitBtn.onclick = () => {
+    submitBtn.onclick = async () => {
       const customPrompt = customInput.value.trim();
       if (customPrompt) {
-        this.processWithCustomPrompt(customPrompt);
+        await this.processWithCustomPrompt(customPrompt);
       }
-      this.close();
     };
 
     // 添加快捷键提示
@@ -499,13 +604,39 @@ class PromptSelectionModal extends Modal {
         const customPrompt = (e.target as HTMLTextAreaElement).value.trim();
         if (customPrompt) {
           this.processWithCustomPrompt(customPrompt);
-          this.close();
         }
       }
     });
 
-    // 自动聚焦到输入框
-    setTimeout(() => customInput.focus(), 100);
+    // 统计信息和设置
+    const bottomSection = contentEl.createDiv({ cls: 'ai-bottom-section' });
+    bottomSection.style.marginTop = '20px';
+
+    // 统计信息
+    if (this.plugin.settings.enableLogging) {
+      const stats = bottomSection.createDiv({ cls: 'ai-stats' });
+      stats.style.padding = '10px';
+      stats.style.border = '1px solid var(--background-modifier-border)';
+      stats.style.borderRadius = '4px';
+
+      const totalTokens = this.plugin.callLogs.reduce((sum: number, log: CallLog) => sum + (log.totalTokens || 0), 0);
+      stats.createEl('p', {
+        text: `调用次数: ${this.plugin.callLogs.length}   |   总 Token: ${totalTokens}`
+      });
+      // stats.createEl('p', { text: `总 Token: ${totalTokens}` });
+    }
+
+    // 设置链接
+    const settingsLink = bottomSection.createEl('a', { text: '打开设置' });
+    settingsLink.href = '#';
+    settingsLink.style.display = 'block';
+    settingsLink.style.marginTop = '10px';
+    settingsLink.onclick = () => {
+      // 打开 Obsidian 设置
+      (this.app as any).setting.open();
+      (this.app as any).setting.openTabById('obsidian-ai-agent');
+      this.close();
+    };
   }
 
   async processWithPrompt(template: PromptTemplate) {
@@ -517,10 +648,45 @@ class PromptSelectionModal extends Modal {
   }
 
   async executePrompt(prompt: string) {
-    const { plugin, content, source } = this;
+    const { plugin } = this;
+    
+    // 获取内容
+    let content = this.content;
+    let source = this.source;
+
+    // 如果没有传入内容，根据选择的模式获取
+    if (!content) {
+      if (this.selectedMode === 'selection') {
+        const editor = plugin.getActiveEditor();
+        if (!editor) {
+          new Notice('请先打开一个 Markdown 文件');
+          return;
+        }
+
+        const selection = editor.getSelection();
+        if (!selection) {
+          new Notice('请先选择要处理的文本');
+          return;
+        }
+        content = selection;
+        source = 'selection';
+      } else {
+        const activeFile = plugin.app.workspace.getActiveFile();
+        if (!activeFile) {
+          new Notice('请先打开一个文件');
+          return;
+        }
+        content = await plugin.app.vault.read(activeFile);
+        source = 'file';
+      }
+    }
+
     const activeFile = plugin.app.workspace.getActiveFile();
 
     try {
+      // 更新状态栏显示连接状态
+      plugin.updateStatusBar('正在连接 AI...');
+      
       // 显示持续连接提示
       this.loadingNotice = new Notice('正在连接 AI，请稍候...', 0);
 
@@ -544,6 +710,9 @@ class PromptSelectionModal extends Modal {
         this.loadingNotice = null;
       }
 
+      // 更新状态栏
+      plugin.updateStatusBar('AI 就绪');
+
       // 记录日志
       if (plugin.settings.enableLogging) {
         plugin.logCall({
@@ -559,7 +728,7 @@ class PromptSelectionModal extends Modal {
       }
 
       // 插入响应
-      await plugin.insertResponse(response.content, source, content);
+      await plugin.insertResponse(response.content, source || 'selection', content);
       
       new Notice('AI 处理完成');
     } catch (error) {
@@ -570,6 +739,9 @@ class PromptSelectionModal extends Modal {
         this.loadingNotice.hide();
         this.loadingNotice = null;
       }
+      
+      // 更新状态栏
+      plugin.updateStatusBar('AI 就绪');
       
       new Notice(`AI 调用失败: ${error.message}`);
     }
@@ -582,70 +754,6 @@ class PromptSelectionModal extends Modal {
       this.loadingNotice = null;
     }
     
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-}
-
-// AI 面板模态框
-class AIPanelModal extends Modal {
-  constructor(app: any, private plugin: AIAgentPlugin) {
-    super(app);
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl('h2', { text: 'AI 助手' });
-
-    // 快捷操作
-    const quickActions = contentEl.createDiv({ cls: 'ai-quick-actions' });
-    quickActions.style.marginTop = '20px';
-    quickActions.style.display = 'grid';
-    quickActions.style.gridTemplateColumns = 'repeat(2, 1fr)';
-    quickActions.style.gap = '10px';
-
-    const processSelBtn = quickActions.createEl('button', { text: '处理选中文本' });
-    processSelBtn.style.padding = '10px';
-    processSelBtn.onclick = () => {
-      this.plugin.processSelection();
-      this.close();
-    };
-
-    const processFileBtn = quickActions.createEl('button', { text: '处理当前文件' });
-    processFileBtn.style.padding = '10px';
-    processFileBtn.onclick = () => {
-      this.plugin.processFile();
-      this.close();
-    };
-
-    // 设置链接
-    const settingsLink = contentEl.createEl('a', { text: '打开设置' });
-    settingsLink.href = '#';
-    settingsLink.style.display = 'block';
-    settingsLink.style.marginTop = '20px';
-    settingsLink.onclick = () => {
-      // 打开 Obsidian 设置
-      (this.app as any).setting.open();
-      (this.app as any).setting.openTabById('obsidian-ai-agent');
-      this.close();
-    };
-
-    // 统计信息
-    if (this.plugin.settings.enableLogging) {
-      const stats = contentEl.createDiv({ cls: 'ai-stats' });
-      stats.style.marginTop = '20px';
-      stats.style.padding = '10px';
-      stats.style.border = '1px solid var(--background-modifier-border)';
-      stats.style.borderRadius = '4px';
-
-      stats.createEl('p', { text: `调用次数: ${this.plugin.callLogs.length}` });
-      
-      const totalTokens = this.plugin.callLogs.reduce((sum: number, log: CallLog) => sum + (log.totalTokens || 0), 0);
-      stats.createEl('p', { text: `总 Token: ${totalTokens}` });
-    }
-  }
-
-  onClose() {
     const { contentEl } = this;
     contentEl.empty();
   }
@@ -991,6 +1099,46 @@ class AIAgentSettingTab extends PluginSettingTab {
           this.display();
         }));
 
+    // 快捷键设置
+    containerEl.createEl('h2', { text: '快捷键设置' });
+
+    new Setting(containerEl)
+      .setName('处理选中文本快捷键')
+      .setDesc('使用 AI 处理选中文本的快捷键（格式：mod+shift+a，其中 mod=Cmd/Ctrl，支持：mod, ctrl, shift, alt）')
+      .addText(text => text
+        .setPlaceholder('mod+shift+a')
+        .setValue(this.plugin.settings.hotkeyProcessSelection)
+        .onChange(async (value) => {
+          this.plugin.settings.hotkeyProcessSelection = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('处理当前文件快捷键')
+      .setDesc('使用 AI 处理当前文件的快捷键（格式：mod+shift+f）')
+      .addText(text => text
+        .setPlaceholder('mod+shift+f')
+        .setValue(this.plugin.settings.hotkeyProcessFile)
+        .onChange(async (value) => {
+          this.plugin.settings.hotkeyProcessFile = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('显示面板快捷键')
+      .setDesc('打开 AI 助手面板的快捷键（留空表示不设置快捷键）')
+      .addText(text => text
+        .setPlaceholder('留空不设置')
+        .setValue(this.plugin.settings.hotkeyShowPanel)
+        .onChange(async (value) => {
+          this.plugin.settings.hotkeyShowPanel = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('快捷键说明')
+      .setDesc('快捷键格式说明：使用 + 号连接，支持的关键字：mod（Mac上是Cmd，Windows上是Ctrl）、ctrl、shift、alt。例如：mod+shift+a 表示 Cmd+Shift+A (Mac) 或 Ctrl+Shift+A (Windows)');
+
     // 其他设置
     containerEl.createEl('h2', { text: '其他' });
 
@@ -1174,10 +1322,10 @@ class AIAgentSettingTab extends PluginSettingTab {
       .addButton(button => button
         .setButtonText('添加')
         .setClass('mod-cta')
-          .onClick(() => {
-            new AddCustomModelModal(this.plugin.app, this.plugin, 'kimi', () => {
-              this.display();
-            }).open();
-          }));
+        .onClick(() => {
+          new AddCustomModelModal(this.plugin.app, this.plugin, 'kimi', () => {
+            this.display();
+          }).open();
+        }));
   }
 }

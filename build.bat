@@ -28,7 +28,7 @@ echo.
 
 REM 检查 npm 是否安装
 echo [2/3] 检查 npm 安装...
-where npm >nul 2>&1
+where npm >nul
 if %errorlevel% neq 0 (
     echo ❌ 错误：未检测到 npm
     pause
@@ -36,7 +36,7 @@ if %errorlevel% neq 0 (
 )
 
 echo ✓ npm 已安装
-npm -v
+call npm version
 echo.
 
 REM 安装依赖

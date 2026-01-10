@@ -94,8 +94,19 @@ export interface AIAgentSettings {
   promptTemplates: PromptTemplate[];
   showDefaultTemplates: boolean; // 是否显示默认 Prompt 模板
   
-  // 日志设置
+// 日志设置
   enableLogging: boolean;
+  
+  // 快捷键设置
+  hotkeyProcessSelection: string; // 处理选中文本的快捷键
+  hotkeyProcessFile: string; // 处理当前文件的快捷键
+  hotkeyShowPanel: string; // 显示面板的快捷键
+}
+
+// 快捷键配置
+export interface HotkeyConfig {
+  modifiers: string[];
+  key: string;
 }
 
 // 调用记录
