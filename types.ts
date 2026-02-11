@@ -101,6 +101,7 @@ export interface AIAgentSettings {
   hotkeyProcessSelection: string; // 处理选中文本的快捷键
   hotkeyProcessFile: string; // 处理当前文件的快捷键
   hotkeyShowPanel: string; // 显示面板的快捷键
+  defaultRoleTemplateId: string; // 默认角色模板 ID
 }
 
 // 快捷键配置

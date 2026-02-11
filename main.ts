@@ -76,7 +76,8 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   // 快捷键设置
   hotkeyProcessSelection: 'mod+shift+a',
   hotkeyProcessFile: 'mod+shift+f',
-  hotkeyShowPanel: ''
+  hotkeyShowPanel: '',
+  defaultRoleTemplateId: ''
 };
 
 export default class AIAgentPlugin extends Plugin {
@@ -97,6 +98,17 @@ export default class AIAgentPlugin extends Plugin {
     });
 
     // 注册命令
+    this.registerCommands();
+
+    // 添加设置页面
+    this.addSettingTab(new AIAgentSettingTab(this.app, this));
+
+    console.log('Obsidian AI Agent 插件已加载');
+  }
+
+  // 注册命令（支持动态更新）
+  registerCommands() {
+    // 重新注册命令
     this.addCommand({
       id: 'ai-process-selection',
       name: '使用 AI 处理选中文本',
@@ -117,11 +129,6 @@ export default class AIAgentPlugin extends Plugin {
       hotkeys: this.parseHotkey(this.settings.hotkeyShowPanel) as any,
       callback: () => this.showAIPanel()
     });
-
-    // 添加设置页面
-    this.addSettingTab(new AIAgentSettingTab(this.app, this));
-
-    console.log('Obsidian AI Agent 插件已加载');
   }
 
   onunload() {
@@ -202,6 +209,17 @@ export default class AIAgentPlugin extends Plugin {
       return;
     }
 
+    // 如果有默认角色模板，直接使用；否则显示面板
+    if (this.settings.defaultRoleTemplateId) {
+      const template = this.settings.promptTemplates.find(t => t.id === this.settings.defaultRoleTemplateId);
+      if (template) {
+        new Notice(`正在使用角色 "${template.name}" 处理...`);
+        await this.executeWithTemplate(template, selection, 'selection');
+        return;
+      }
+    }
+
+    // 如果没有设置默认角色，显示面板
     this.showAIPanel(selection, 'selection');
   }
 
@@ -214,7 +232,78 @@ export default class AIAgentPlugin extends Plugin {
     }
 
     const content = await this.app.vault.read(activeFile);
+
+    // 如果有默认角色模板，直接使用；否则显示面板
+    if (this.settings.defaultRoleTemplateId) {
+      const template = this.settings.promptTemplates.find(t => t.id === this.settings.defaultRoleTemplateId);
+      if (template) {
+        new Notice(`正在使用角色 "${template.name}" 处理...`);
+        await this.executeWithTemplate(template, content, 'file');
+        return;
+      }
+    }
+
+    // 如果没有设置默认角色，显示面板
     this.showAIPanel(content, 'file');
+  }
+
+  // 使用指定模板执行处理
+  async executeWithTemplate(template: PromptTemplate, content: string, source: 'selection' | 'file') {
+    const activeFile = this.app.workspace.getActiveFile();
+
+    try {
+      // 更新状态栏显示连接状态
+      this.updateStatusBar('正在连接 AI...');
+      
+      // 显示持续连接提示
+      const loadingNotice = new Notice('正在连接 AI，请稍候...', 0);
+
+      const expandedPrompt = expandTemplate(
+        template.content,
+        content,
+        activeFile?.basename,
+        new Date().toLocaleDateString('zh-CN')
+      );
+
+      const response = await this.callAI(
+        expandedPrompt,
+        content,
+        this.settings.defaultProvider,
+        this.settings.defaultModel
+      );
+
+      // 关闭加载提示
+      loadingNotice.hide();
+
+      // 更新状态栏
+      this.updateStatusBar('AI 就绪');
+
+      // 记录日志
+      if (this.settings.enableLogging) {
+        this.logCall({
+          timestamp: Date.now(),
+          provider: this.settings.defaultProvider,
+          model: this.settings.defaultModel,
+          prompt: expandedPrompt,
+          response: response.content,
+          inputTokens: response.usage?.promptTokens,
+          outputTokens: response.usage?.completionTokens,
+          totalTokens: response.usage?.totalTokens
+        });
+      }
+
+      // 插入响应
+      await this.insertResponse(response.content, source, content);
+      
+      new Notice('AI 处理完成');
+    } catch (error) {
+      console.error('AI 调用失败:', error);
+      
+      // 更新状态栏
+      this.updateStatusBar('AI 就绪');
+      
+      new Notice(`AI 调用失败: ${error.message}`);
+    }
   }
 
   // 显示 AI 面板（合并后的统一界面）
@@ -342,6 +431,213 @@ export default class AIAgentPlugin extends Plugin {
       console.error('连接测试失败:', error);
       return false;
     }
+  }
+}
+
+// 编辑角色模板 Modal
+class EditRoleTemplateModal extends Modal {
+  constructor(
+    app: any,
+    private plugin: AIAgentPlugin,
+    private templateIndex: number,
+    private template: PromptTemplate,
+    private onCloseCallback: () => void
+  ) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h2', { text: '编辑角色模板' });
+
+    // 角色名称输入
+    const nameContainer = contentEl.createDiv();
+    nameContainer.style.marginTop = '20px';
+    nameContainer.createEl('label', { text: '角色名称', cls: 'setting-item' });
+    
+    const nameInput = nameContainer.createEl('input', { 
+      type: 'text',
+      value: this.template.name
+    }) as HTMLInputElement;
+    nameInput.style.width = '100%';
+    nameInput.style.marginTop = '5px';
+    nameInput.style.padding = '5px';
+
+    // 角色设定输入
+    const contentContainer = contentEl.createDiv();
+    contentContainer.style.marginTop = '15px';
+    contentContainer.createEl('label', { text: '角色设定', cls: 'setting-item' });
+    
+    const contentDesc = contentContainer.createEl('p', {
+      text: '使用 {{content}} 作为要处理的内容占位符',
+      cls: 'setting-item-description'
+    });
+    contentDesc.style.fontSize = '0.85em';
+    contentDesc.style.color = 'var(--text-muted)';
+    contentDesc.style.marginTop = '5px';
+
+    const contentInput = contentContainer.createEl('textarea') as HTMLTextAreaElement;
+    contentInput.value = this.template.content;
+    contentInput.style.width = '100%';
+    contentInput.style.height = '150px';
+    contentInput.style.marginTop = '5px';
+    contentInput.style.padding = '5px';
+
+    // 按钮容器
+    const buttonContainer = contentEl.createDiv();
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '10px';
+    buttonContainer.style.justifyContent = 'flex-end';
+    buttonContainer.style.marginTop = '20px';
+
+    // 取消按钮
+    const cancelBtn = buttonContainer.createEl('button', { text: '取消' });
+    cancelBtn.style.padding = '8px 16px';
+    cancelBtn.onclick = () => this.close();
+
+    // 确定按钮
+    const confirmBtn = buttonContainer.createEl('button', { 
+      text: '确定',
+      cls: 'mod-cta'
+    });
+    confirmBtn.style.padding = '8px 16px';
+    confirmBtn.onclick = () => {
+      const name = nameInput.value.trim();
+      const content = contentInput.value.trim();
+
+      if (!name) {
+        new Notice('请输入角色名称');
+        return;
+      }
+
+      if (!content) {
+        new Notice('请输入角色设定');
+        return;
+      }
+
+      if (!content.includes('{{content}}')) {
+        new Notice('角色设定必须包含 {{content}} 占位符');
+        return;
+      }
+
+      this.plugin.settings.promptTemplates[this.templateIndex].name = name;
+      this.plugin.settings.promptTemplates[this.templateIndex].content = content;
+      this.plugin.saveSettings();
+      new Notice('角色模板修改成功！');
+      this.close();
+      this.onCloseCallback();
+    };
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+// 添加角色模板 Modal
+class AddRoleTemplateModal extends Modal {
+  constructor(
+    app: any,
+    private plugin: AIAgentPlugin,
+    private onCloseCallback: () => void
+  ) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h2', { text: '添加角色模板' });
+
+    // 角色名称输入
+    const nameContainer = contentEl.createDiv();
+    nameContainer.style.marginTop = '20px';
+    nameContainer.createEl('label', { text: '角色名称', cls: 'setting-item' });
+    
+    const nameInput = nameContainer.createEl('input', { 
+      type: 'text',
+      placeholder: '例如：写作专家'
+    }) as HTMLInputElement;
+    nameInput.style.width = '100%';
+    nameInput.style.marginTop = '5px';
+    nameInput.style.padding = '5px';
+
+    // 角色设定输入
+    const contentContainer = contentEl.createDiv();
+    contentContainer.style.marginTop = '15px';
+    contentContainer.createEl('label', { text: '角色设定', cls: 'setting-item' });
+    
+    const contentDesc = contentContainer.createEl('p', {
+      text: '使用 {{content}} 作为要处理的内容占位符',
+      cls: 'setting-item-description'
+    });
+    contentDesc.style.fontSize = '0.85em';
+    contentDesc.style.color = 'var(--text-muted)';
+    contentDesc.style.marginTop = '5px';
+
+    const contentInput = contentContainer.createEl('textarea', {
+      placeholder: '例如：你是一位专业的写作专家。请帮助用户改进以下内容的表达和结构：\n\n{{content}}'
+    }) as HTMLTextAreaElement;
+    contentInput.style.width = '100%';
+    contentInput.style.height = '150px';
+    contentInput.style.marginTop = '5px';
+    contentInput.style.padding = '5px';
+
+    // 按钮容器
+    const buttonContainer = contentEl.createDiv();
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '10px';
+    buttonContainer.style.justifyContent = 'flex-end';
+    buttonContainer.style.marginTop = '20px';
+
+    // 取消按钮
+    const cancelBtn = buttonContainer.createEl('button', { text: '取消' });
+    cancelBtn.style.padding = '8px 16px';
+    cancelBtn.onclick = () => this.close();
+
+    // 确定按钮
+    const confirmBtn = buttonContainer.createEl('button', { 
+      text: '确定',
+      cls: 'mod-cta'
+    });
+    confirmBtn.style.padding = '8px 16px';
+    confirmBtn.onclick = () => {
+      const name = nameInput.value.trim();
+      const content = contentInput.value.trim();
+
+      if (!name) {
+        new Notice('请输入角色名称');
+        return;
+      }
+
+      if (!content) {
+        new Notice('请输入角色设定');
+        return;
+      }
+
+      if (!content.includes('{{content}}')) {
+        new Notice('角色设定必须包含 {{content}} 占位符');
+        return;
+      }
+
+      this.plugin.settings.promptTemplates.push({
+        id: 'custom-' + Date.now(),
+        name: name,
+        content: content,
+        isBuiltIn: false,
+        enabled: true
+      });
+
+      this.plugin.saveSettings();
+      new Notice('角色模板添加成功！');
+      this.close();
+      this.onCloseCallback();
+    };
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
   }
 }
 
@@ -1044,28 +1340,49 @@ class AIAgentSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    // Prompt 模板管理
-    containerEl.createEl('h2', { text: 'Prompt 模板' });
+    // Prompt 角色模板管理
+    containerEl.createEl('h2', { text: 'Prompt 角色模板' });
 
+    // 显示提示信息
+    const descDiv = containerEl.createDiv();
+    descDiv.createEl('p', { 
+      text: '在这里创建 AI 角色设定，例如"写作专家"、"代码审查员"等。在笔记中选定内容后，使用快捷键即可让 AI 按照设定的角色身份处理内容。' 
+    });
+    descDiv.style.marginBottom = '20px';
+
+    // 默认角色选择（单选）
+    const customTemplates = this.plugin.settings.promptTemplates.filter(t => !t.isBuiltIn);
+    if (customTemplates.length > 0) {
+      new Setting(containerEl)
+        .setName('默认角色模板')
+        .setDesc('设置快捷键使用的默认 AI 角色。选择一个角色后，按下快捷键将直接使用该角色处理内容，不弹出面板。留空则每次使用快捷键时弹出选择面板。')
+        .addDropdown(dropdown => {
+          dropdown.addOption('', '不设置（弹出选择面板）');
+          customTemplates.forEach(template => {
+            dropdown.addOption(template.id, template.name);
+          });
+          dropdown.setValue(this.plugin.settings.defaultRoleTemplateId);
+          dropdown.onChange(async (value) => {
+            this.plugin.settings.defaultRoleTemplateId = value;
+            await this.plugin.saveSettings();
+          });
+        });
+    }
+
+    // 自定义模板列表
     this.plugin.settings.promptTemplates.forEach((template, index) => {
       const setting = new Setting(containerEl);
-      
-      if (template.isBuiltIn) {
-        // 内置模板：显示名称、内容和独立开关
-        setting.setName(template.name);
-        setting.setDesc(template.content.substring(0, 50) + '...');
-        
-        // 添加独立开关按钮
-        setting.addToggle(toggle => toggle
-          .setValue(template.enabled)
-          .onChange(async (value) => {
-            this.plugin.settings.promptTemplates[index].enabled = value;
-            await this.plugin.saveSettings();
-          }));
-      } else {
-        // 自定义模板：显示名称和删除按钮
-        setting.setName(template.name);
-        setting.addExtraButton(button => button
+      setting.setName(template.name)
+        .setDesc(template.content.substring(0, 80) + (template.content.length > 80 ? '...' : ''))
+        .addExtraButton(button => button
+          .setIcon('edit')
+          .setTooltip('编辑')
+          .onClick(() => {
+            new EditRoleTemplateModal(this.plugin.app, this.plugin, index, template, () => {
+              this.display();
+            }).open();
+          }))
+        .addExtraButton(button => button
           .setIcon('trash')
           .setTooltip('删除')
           .onClick(async () => {
@@ -1073,30 +1390,18 @@ class AIAgentSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.display();
           }));
-      }
     });
 
     new Setting(containerEl)
-      .setName('添加自定义模板')
-      .setDesc('创建新的 Prompt 模板')
+      .setName('添加角色模板')
+      .setDesc('创建新的 AI 角色设定')
       .addButton(button => button
         .setButtonText('添加')
         .setClass('mod-cta')
         .onClick(() => {
-          const name = prompt('模板名称:');
-          if (!name) return;
-          const content = prompt('模板内容（使用 {{content}} 作为占位符）:');
-          if (!content) return;
-          
-          this.plugin.settings.promptTemplates.push({
-            id: 'custom-' + Date.now(),
-            name,
-            content,
-            isBuiltIn: false,
-            enabled: true
-          });
-          this.plugin.saveSettings();
-          this.display();
+          new AddRoleTemplateModal(this.plugin.app, this.plugin, () => {
+            this.display();
+          }).open();
         }));
 
     // 快捷键设置
@@ -1104,7 +1409,7 @@ class AIAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('处理选中文本快捷键')
-      .setDesc('使用 AI 处理选中文本的快捷键（格式：mod+shift+a，其中 mod=Cmd/Ctrl，支持：mod, ctrl, shift, alt）')
+      .setDesc('使用 AI 处理选中文本的快捷键（格式：mod+shift+a，其中 mod=Cmd/Ctrl，支持：mod, ctrl, shift, alt）。修改后需要重新加载插件。')
       .addText(text => text
         .setPlaceholder('mod+shift+a')
         .setValue(this.plugin.settings.hotkeyProcessSelection)
@@ -1115,7 +1420,7 @@ class AIAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('处理当前文件快捷键')
-      .setDesc('使用 AI 处理当前文件的快捷键（格式：mod+shift+f）')
+      .setDesc('使用 AI 处理当前文件的快捷键（格式：mod+shift+f）。修改后需要重新加载插件。')
       .addText(text => text
         .setPlaceholder('mod+shift+f')
         .setValue(this.plugin.settings.hotkeyProcessFile)
@@ -1126,7 +1431,7 @@ class AIAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('显示面板快捷键')
-      .setDesc('打开 AI 助手面板的快捷键（留空表示不设置快捷键）')
+      .setDesc('打开 AI 助手面板的快捷键（留空表示不设置快捷键）。修改后需要重新加载插件。')
       .addText(text => text
         .setPlaceholder('留空不设置')
         .setValue(this.plugin.settings.hotkeyShowPanel)
