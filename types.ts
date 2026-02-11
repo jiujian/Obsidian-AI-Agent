@@ -23,6 +23,7 @@ export interface AIRequest {
   provider: AIProviderType;
   maxTokens?: number;
   temperature?: number;
+  abortSignal?: AbortSignal; // 用于中断请求
 }
 
 // AI 响应
@@ -65,6 +66,12 @@ export interface AIAgentSettings {
   zhipuModels: ModelInfo[];
   zhipuCustomModels: ModelInfo[]; // 自定义智谱 AI 模型
   
+  // 智谱 AI MCP 配置
+  zhipuMcpVision: boolean; // 视觉理解 MCP
+  zhipuMcpWebSearch: boolean; // 联网搜索 MCP
+  zhipuMcpWebReader: boolean; // 网页阅读 MCP
+  zhipuMcpZread: boolean; // 开源仓库 MCP
+  
   // OpenAI 配置
   openaiApiKey: string;
   openaiBaseUrl: string; // OpenAI Base URL（支持自定义代理）
@@ -101,6 +108,7 @@ export interface AIAgentSettings {
   hotkeyProcessSelection: string; // 处理选中文本的快捷键
   hotkeyProcessFile: string; // 处理当前文件的快捷键
   hotkeyShowPanel: string; // 显示面板的快捷键
+  hotkeyStopAI: string; // 停止AI的快捷键
   defaultRoleTemplateId: string; // 默认角色模板 ID
 }
 

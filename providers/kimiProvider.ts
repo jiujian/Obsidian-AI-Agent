@@ -42,7 +42,8 @@ export class KimiProvider implements IAIProvider {
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: request.abortSignal
       });
       
       if (!response.ok) {
@@ -61,6 +62,11 @@ export class KimiProvider implements IAIProvider {
         }
       };
     } catch (error) {
+      // 如果是AbortError，直接重新抛出，不要包装
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
+      
       if (error instanceof Error) {
         throw new Error(`Kimi API 调用失败: ${error.message}`);
       }

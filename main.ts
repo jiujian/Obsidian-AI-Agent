@@ -11,7 +11,7 @@ import {
   PromptTemplate
 } from './types';
 import { DeepSeekProvider } from './providers/deepseekProvider';
-import { ZhipuProvider } from './providers/zhipuProvider';
+import { ZhipuProvider, ZhipuMcpConfig } from './providers/zhipuProvider';
 import { OpenAIProvider } from './providers/openaiProvider';
 import { KimiProvider } from './providers/kimiProvider';
 import { BUILTIN_PROMPTS, expandTemplate } from './promptTemplates';
@@ -34,6 +34,12 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
     { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: 'zhipu', enabled: true }
   ],
   zhipuCustomModels: [], // 自定义智谱 AI 模型
+  
+  // 智谱 AI MCP 配置
+  zhipuMcpVision: false, // 视觉理解 MCP
+  zhipuMcpWebSearch: false, // 联网搜索 MCP
+  zhipuMcpWebReader: false, // 网页阅读 MCP
+  zhipuMcpZread: false, // 开源仓库 MCP
   
   // OpenAI 配置
   openaiApiKey: '',
@@ -77,6 +83,7 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   hotkeyProcessSelection: 'mod+shift+a',
   hotkeyProcessFile: 'mod+shift+f',
   hotkeyShowPanel: '',
+  hotkeyStopAI: 'escape',
   defaultRoleTemplateId: ''
 };
 
@@ -84,13 +91,16 @@ export default class AIAgentPlugin extends Plugin {
   settings: AIAgentSettings;
   callLogs: CallLog[] = [];
   private statusBarItem: HTMLElement | null = null;
+  private currentAbortController: AbortController | null = null;
+  private timerInterval: NodeJS.Timeout | null = null;
+  private startTime: number = 0;
 
   async onload() {
     await this.loadSettings();
 
     // 添加状态栏项目
     this.statusBarItem = this.addStatusBarItem();
-    this.updateStatusBar('AI 就绪');
+    this.updateStatusBar('就绪');
 
     // 添加功能区图标
     this.addRibbonIcon('bot', 'AI 助手', () => {
@@ -129,6 +139,52 @@ export default class AIAgentPlugin extends Plugin {
       hotkeys: this.parseHotkey(this.settings.hotkeyShowPanel) as any,
       callback: () => this.showAIPanel()
     });
+
+    this.addCommand({
+      id: 'ai-stop',
+      name: '停止 AI 处理',
+      hotkeys: this.parseHotkey(this.settings.hotkeyStopAI) as any,
+      callback: () => this.stopAI()
+    });
+  }
+
+  // 停止AI处理
+  stopAI() {
+    if (this.currentAbortController) {
+      this.currentAbortController.abort();
+      this.currentAbortController = null;
+      new Notice('已停止');
+      
+      // 清除计时器
+      if (this.timerInterval) {
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+      }
+      this.updateStatusBar('已停止');
+    } else {
+      new Notice('没有正在进行的 AI 处理');
+    }
+  }
+
+  // 开始计时器
+  startTimer() {
+    this.startTime = Date.now();
+    this.updateStatusBar('0秒');
+    
+    this.timerInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+      this.updateStatusBar(`${elapsed}秒`);
+    }, 1000);
+  }
+
+  // 停止计时器并显示完成时间
+  stopTimer() {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    return elapsed;
   }
 
   onunload() {
@@ -250,21 +306,24 @@ export default class AIAgentPlugin extends Plugin {
   // 使用指定模板执行处理
   async executeWithTemplate(template: PromptTemplate, content: string, source: 'selection' | 'file') {
     const activeFile = this.app.workspace.getActiveFile();
+    
+    // 创建 AbortController
+    this.currentAbortController = new AbortController();
+    
+    // 开始计时
+    this.startTimer();
+    
+    // 显示持续连接提示
+    const loadingNotice = new Notice('正在连接 AI，请稍候...', 0);
+
+    const expandedPrompt = expandTemplate(
+      template.content,
+      content,
+      activeFile?.basename,
+      new Date().toLocaleDateString('zh-CN')
+    );
 
     try {
-      // 更新状态栏显示连接状态
-      this.updateStatusBar('正在连接 AI...');
-      
-      // 显示持续连接提示
-      const loadingNotice = new Notice('正在连接 AI，请稍候...', 0);
-
-      const expandedPrompt = expandTemplate(
-        template.content,
-        content,
-        activeFile?.basename,
-        new Date().toLocaleDateString('zh-CN')
-      );
-
       const response = await this.callAI(
         expandedPrompt,
         content,
@@ -275,8 +334,12 @@ export default class AIAgentPlugin extends Plugin {
       // 关闭加载提示
       loadingNotice.hide();
 
-      // 更新状态栏
-      this.updateStatusBar('AI 就绪');
+      // 停止计时并显示完成时间
+      const elapsed = this.stopTimer();
+      this.updateStatusBar(`完成 ${elapsed}秒`);
+      
+      // 清除 AbortController
+      this.currentAbortController = null;
 
       // 记录日志
       if (this.settings.enableLogging) {
@@ -296,13 +359,33 @@ export default class AIAgentPlugin extends Plugin {
       await this.insertResponse(response.content, source, content);
       
       new Notice('AI 处理完成');
+      
+      // 成功完成，确保不会有AbortError
+      return;
     } catch (error) {
       console.error('AI 调用失败:', error);
+      
+      // 关闭加载提示
+      loadingNotice.hide();
+      
+      // 停止计时
+      this.stopTimer();
+      
+      // 清除 AbortController
+      this.currentAbortController = null;
       
       // 更新状态栏
       this.updateStatusBar('AI 就绪');
       
-      new Notice(`AI 调用失败: ${error.message}`);
+      // 判断是否是用户主动中断
+      if (error.name === 'AbortError') {
+        new Notice('已停止');
+      } else {
+        new Notice(`AI 调用失败: ${error.message}`);
+      }
+      
+      // 对于任何错误（包括中断），都不插入内容
+      return;
     }
   }
 
@@ -319,7 +402,8 @@ export default class AIAgentPlugin extends Plugin {
       modelId,
       provider,
       maxTokens: this.settings.maxTokens,
-      temperature: this.settings.temperature
+      temperature: this.settings.temperature,
+      abortSignal: this.currentAbortController?.signal
     };
 
     let providerInstance;
@@ -329,7 +413,13 @@ export default class AIAgentPlugin extends Plugin {
         providerInstance = new DeepSeekProvider(this.settings.deepseekApiKey, this.settings.deepseekBaseUrl);
         break;
       case 'zhipu':
-        providerInstance = new ZhipuProvider(this.settings.zhipuApiKey, this.settings.zhipuBaseUrl);
+        const mcpConfig: ZhipuMcpConfig = {
+          vision: this.settings.zhipuMcpVision,
+          webSearch: this.settings.zhipuMcpWebSearch,
+          webReader: this.settings.zhipuMcpWebReader,
+          zread: this.settings.zhipuMcpZread
+        };
+        providerInstance = new ZhipuProvider(this.settings.zhipuApiKey, this.settings.zhipuBaseUrl, mcpConfig);
         break;
       case 'openai':
         providerInstance = new OpenAIProvider(this.settings.openaiApiKey, this.settings.openaiBaseUrl);
@@ -980,9 +1070,12 @@ class AIPanelModal extends Modal {
     const activeFile = plugin.app.workspace.getActiveFile();
 
     try {
-      // 更新状态栏显示连接状态
-      plugin.updateStatusBar('正在连接 AI...');
+      // 创建 AbortController
+      plugin['currentAbortController'] = new AbortController();
       
+      // 开始计时
+      plugin['startTimer']();
+
       // 显示持续连接提示
       this.loadingNotice = new Notice('正在连接 AI，请稍候...', 0);
 
@@ -1006,8 +1099,12 @@ class AIPanelModal extends Modal {
         this.loadingNotice = null;
       }
 
-      // 更新状态栏
-      plugin.updateStatusBar('AI 就绪');
+      // 停止计时并显示完成时间
+      const elapsed = plugin['stopTimer']();
+      plugin.updateStatusBar(`完成 ${elapsed}秒`);
+      
+      // 清除 AbortController
+      plugin['currentAbortController'] = null;
 
       // 记录日志
       if (plugin.settings.enableLogging) {
@@ -1027,8 +1124,17 @@ class AIPanelModal extends Modal {
       await plugin.insertResponse(response.content, source || 'selection', content);
       
       new Notice('AI 处理完成');
+      
+      // 成功完成，确保不会有AbortError
+      return;
     } catch (error) {
       console.error('AI 调用失败:', error);
+      
+      // 停止计时
+      plugin['stopTimer']();
+      
+      // 清除 AbortController
+      plugin['currentAbortController'] = null;
       
       // 关闭加载提示
       if (this.loadingNotice) {
@@ -1039,7 +1145,15 @@ class AIPanelModal extends Modal {
       // 更新状态栏
       plugin.updateStatusBar('AI 就绪');
       
-      new Notice(`AI 调用失败: ${error.message}`);
+      // 判断是否是用户主动中断
+      if (error.name === 'AbortError') {
+        new Notice('已停止');
+      } else {
+        new Notice(`AI 调用失败: ${error.message}`);
+      }
+      
+      // 对于任何错误（包括中断），都不插入内容
+      return;
     }
   }
 
@@ -1155,6 +1269,49 @@ class AIAgentSettingTab extends PluginSettingTab {
 
     // 智谱 AI 模型管理
     this.addZhipuModelSection(containerEl);
+
+    // 智谱 AI MCP 配置
+    containerEl.createEl('h3', { text: '智谱 AI MCP 配置' });
+    
+    new Setting(containerEl)
+      .setName('视觉理解 MCP')
+      .setDesc('启用视觉理解功能，AI可根据需要自动判断是否使用')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.zhipuMcpVision)
+        .onChange(async (value) => {
+          this.plugin.settings.zhipuMcpVision = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('联网搜索 MCP')
+      .setDesc('启用联网搜索功能，AI可根据需要自动判断是否使用，或在用户明确要求时使用')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.zhipuMcpWebSearch)
+        .onChange(async (value) => {
+          this.plugin.settings.zhipuMcpWebSearch = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('网页阅读 MCP')
+      .setDesc('启用网页阅读功能，AI可根据需要自动判断是否使用')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.zhipuMcpWebReader)
+        .onChange(async (value) => {
+          this.plugin.settings.zhipuMcpWebReader = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('开源仓库 MCP')
+      .setDesc('启用开源仓库读取功能，AI可根据需要自动判断是否使用')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.zhipuMcpZread)
+        .onChange(async (value) => {
+          this.plugin.settings.zhipuMcpZread = value;
+          await this.plugin.saveSettings();
+        }));
 
     // OpenAI 配置
     containerEl.createEl('h2', { text: 'OpenAI 配置' });
@@ -1437,6 +1594,17 @@ class AIAgentSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.hotkeyShowPanel)
         .onChange(async (value) => {
           this.plugin.settings.hotkeyShowPanel = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('停止 AI 快捷键')
+      .setDesc('停止正在进行的 AI 处理的快捷键（默认为 Escape 键）')
+      .addText(text => text
+        .setPlaceholder('escape')
+        .setValue(this.plugin.settings.hotkeyStopAI)
+        .onChange(async (value) => {
+          this.plugin.settings.hotkeyStopAI = value;
           await this.plugin.saveSettings();
         }));
 
