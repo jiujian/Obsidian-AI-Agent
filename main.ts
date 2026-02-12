@@ -31,7 +31,8 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   zhipuBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
   zhipuModels: [
     { id: 'glm-4', name: 'GLM-4', provider: 'zhipu', enabled: true },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: 'zhipu', enabled: true }
+    { id: 'glm-4-plus', name: 'GLM-4 Plus', provider: 'zhipu', enabled: true },
+    { id: 'glm-3-turbo', name: 'GLM-3 Turbo', provider: 'zhipu', enabled: true }
   ],
   zhipuCustomModels: [], // 自定义智谱 AI 模型
   
@@ -65,7 +66,7 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   
   // 调用设置
   timeout: 30000,
-  maxTokens: 2000,
+  maxTokens: 1000,
   temperature: 0.7,
   
   // 输出设置
@@ -173,7 +174,7 @@ export default class AIAgentPlugin extends Plugin {
     
     this.timerInterval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-      this.updateStatusBar(`${elapsed}秒`);
+      this.updateStatusBar(`${elapsed}秒运行`);
     }, 1000);
   }
 
@@ -336,7 +337,7 @@ export default class AIAgentPlugin extends Plugin {
 
       // 停止计时并显示完成时间
       const elapsed = this.stopTimer();
-      this.updateStatusBar(`完成 ${elapsed}秒`);
+      this.updateStatusBar(`${elapsed}秒完成`);
       
       // 清除 AbortController
       this.currentAbortController = null;
@@ -489,7 +490,7 @@ export default class AIAgentPlugin extends Plugin {
   }
 
   // 测试 API 连接
-  async testConnection(provider: AIProviderType): Promise<boolean> {
+  async testConnection(provider: AIProviderType): Promise<{success: boolean, error?: string}> {
     try {
       let modelId = 'deepseek-chat';
       
@@ -516,10 +517,11 @@ export default class AIAgentPlugin extends Plugin {
       };
 
       await this.callAI(request.prompt, '', provider, request.modelId);
-      return true;
+      return {success: true};
     } catch (error) {
       console.error('连接测试失败:', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      return {success: false, error: errorMessage};
     }
   }
 }
@@ -1101,7 +1103,7 @@ class AIPanelModal extends Modal {
 
       // 停止计时并显示完成时间
       const elapsed = plugin['stopTimer']();
-      plugin.updateStatusBar(`完成 ${elapsed}秒`);
+      plugin.updateStatusBar(`${elapsed}秒完成`);
       
       // 清除 AbortController
       plugin['currentAbortController'] = null;
@@ -1214,11 +1216,11 @@ class AIAgentSettingTab extends PluginSettingTab {
         .setClass('mod-cta')
         .onClick(async () => {
           button.setButtonText('测试中...');
-          const success = await this.plugin.testConnection('deepseek');
-          if (success) {
+          const result = await this.plugin.testConnection('deepseek');
+          if (result.success) {
             new Notice('DeepSeek 连接成功！');
           } else {
-            new Notice('DeepSeek 连接失败，请检查 API Key');
+            new Notice(`DeepSeek 连接失败: ${result.error}`);
           }
           button.setButtonText('测试');
         }));
@@ -1242,7 +1244,7 @@ class AIAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Base URL')
-      .setDesc('智谱 AI 基础 URL（支持私有代理）')
+      .setDesc('智谱 AI 基础 URL。两个端点均可使用：通用端点（默认）或 Coding 端点')
       .addText(text => text
         .setPlaceholder('https://open.bigmodel.cn/api/paas/v4')
         .setValue(this.plugin.settings.zhipuBaseUrl)
@@ -1258,11 +1260,11 @@ class AIAgentSettingTab extends PluginSettingTab {
         .setClass('mod-cta')
         .onClick(async () => {
           button.setButtonText('测试中...');
-          const success = await this.plugin.testConnection('zhipu');
-          if (success) {
+          const result = await this.plugin.testConnection('zhipu');
+          if (result.success) {
             new Notice('智谱 AI 连接成功！');
           } else {
-            new Notice('智谱 AI 连接失败，请检查 API Key');
+            new Notice(`智谱 AI 连接失败: ${result.error}`);
           }
           button.setButtonText('测试');
         }));
@@ -1345,11 +1347,11 @@ class AIAgentSettingTab extends PluginSettingTab {
         .setClass('mod-cta')
         .onClick(async () => {
           button.setButtonText('测试中...');
-          const success = await this.plugin.testConnection('openai');
-          if (success) {
+          const result = await this.plugin.testConnection('openai');
+          if (result.success) {
             new Notice('OpenAI 连接成功！');
           } else {
-            new Notice('OpenAI 连接失败，请检查 API Key');
+            new Notice(`OpenAI 连接失败: ${result.error}`);
           }
           button.setButtonText('测试');
         }));
@@ -1389,11 +1391,11 @@ class AIAgentSettingTab extends PluginSettingTab {
         .setClass('mod-cta')
         .onClick(async () => {
           button.setButtonText('测试中...');
-          const success = await this.plugin.testConnection('kimi');
-          if (success) {
+          const result = await this.plugin.testConnection('kimi');
+          if (result.success) {
             new Notice('Kimi 连接成功！');
           } else {
-            new Notice('Kimi 连接失败，请检查 API Key');
+            new Notice(`Kimi 连接失败: ${result.error}`);
           }
           button.setButtonText('测试');
         }));

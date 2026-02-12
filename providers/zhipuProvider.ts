@@ -140,7 +140,13 @@ export class ZhipuProvider implements IAIProvider {
   }
   
   async call(request: AIRequest): Promise<AIResponse> {
-    const url = `${this.baseUrl}/chat/completions`;
+    // 兼容用户输入完整 URL 或基础 URL 的情况
+    let url = this.baseUrl;
+    
+    // 如果 URL 不以 /chat/completions 结尾，则拼接
+    if (!url.endsWith('/chat/completions')) {
+      url = `${url}/chat/completions`;
+    }
     
     const headers = {
       'Content-Type': 'application/json',
@@ -167,15 +173,23 @@ export class ZhipuProvider implements IAIProvider {
       });
     }
     
+    // 构建请求体 - 注意：智谱AI可能不支持某些参数
     const body: any = {
       model: request.modelId,
-      messages: messages,
-      max_tokens: request.maxTokens || 2000,
-      temperature: request.temperature || 0.7
+      messages: messages
     };
     
-    // 添加工具配置
-    const tools = this.buildTools(userText);
+    // 只在明确指定时才添加这些参数
+    if (request.maxTokens) {
+      body.max_tokens = request.maxTokens;
+    }
+    if (request.temperature) {
+      body.temperature = request.temperature;
+    }
+    
+    // Coding 端点不支持 MCP 工具，只在通用端点添加工具配置
+    const isCodingEndpoint = url.includes('/coding/');
+    const tools = isCodingEndpoint ? [] : this.buildTools(userText);
     let mcpTools: string[] = [];
     if (tools.length > 0) {
       body.tools = tools;
@@ -188,6 +202,14 @@ export class ZhipuProvider implements IAIProvider {
     }
     
     try {
+      console.log('智谱 API 请求详情:', {
+        url,
+        model: body.model,
+        messagesCount: messages.length,
+        hasTools: !!body.tools,
+        requestBody: body
+      });
+      
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
@@ -197,6 +219,12 @@ export class ZhipuProvider implements IAIProvider {
       
       if (!response.ok) {
         const errorText = await response.text();
+        console.error('智谱 API 响应错误:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+          requestBody: body
+        });
         throw new Error(`智谱 AI API 错误: ${response.status} - ${errorText}`);
       }
       
