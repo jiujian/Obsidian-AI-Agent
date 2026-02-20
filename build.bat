@@ -1,80 +1,88 @@
 @echo off
-chcp 65001 >nul
+setlocal enabledelayedexpansion
+
 echo ========================================
-echo   Obsidian AI Agent 插件构建脚本
+echo   Obsidian AI Agent Plugin Builder
 echo ========================================
 echo.
 
-REM 检查 Node.js 是否安装
-echo [1/3] 检查 Node.js 安装...
-where node >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ❌ 错误：未检测到 Node.js
+REM Check Node.js installation
+echo [1/3] Checking Node.js installation...
+for /f "tokens=*" %%i in ('node -v') do set NODE_VERSION=%%i
+if "%NODE_VERSION%"=="" (
+    echo ERROR: Node.js not detected
     echo.
-    echo 请按以下步骤安装：
-    echo 1. 访问 https://nodejs.org/
-    echo 2. 下载并安装 LTS 版本（推荐 18.x 或 20.x）
-    echo 3. 安装时确保勾选 "Add to PATH"
-    echo 4. 重要：重启此命令提示符窗口！
-    echo 5. 然后重新运行此脚本
+    echo Please install Node.js:
+    echo 1. Visit https://nodejs.org/
+    echo 2. Download and install LTS version (18.x or 20.x recommended)
+    echo 3. Make sure to check "Add to PATH" during installation
+    echo 4. IMPORTANT: Restart command prompt after installation!
+    echo.
+    echo You can verify by running: node -v
     echo.
     pause
     exit /b 1
 )
 
-echo ✓ Node.js 已安装
-node -v
+echo [OK] Node.js is installed
+echo   Version: %NODE_VERSION%
 echo.
 
-REM 检查 npm 是否安装
-echo [2/3] 检查 npm 安装...
-where npm >nul
-if %errorlevel% neq 0 (
-    echo ❌ 错误：未检测到 npm
+REM Check npm installation
+echo [2/3] Checking npm installation...
+for /f "tokens=*" %%i in ('npm -v') do set NPM_VERSION=%%i
+if "%NPM_VERSION%"=="" (
+    echo ERROR: npm not detected
+    echo npm usually comes with Node.js
+    echo.
     pause
     exit /b 1
 )
 
-echo ✓ npm 已安装
-call npm version
+echo [OK] npm is installed
+echo   Version: %NPM_VERSION%
 echo.
 
-REM 安装依赖
-echo [3/3] 安装依赖并构建插件...
+REM Install dependencies and build
+echo [3/3] Installing dependencies and building plugin...
 echo.
-echo 正在运行: npm install...
+echo Running: npm install...
 call npm install
 if %errorlevel% neq 0 (
     echo.
-    echo ❌ 依赖安装失败
+    echo ERROR: Dependency installation failed
     echo.
     pause
     exit /b 1
 )
 echo.
-echo ✓ 依赖安装成功
+echo [OK] Dependencies installed
 echo.
-echo 正在运行: npm run build...
+echo Running: npm run build...
 call npm run build
 if %errorlevel% neq 0 (
     echo.
-    echo ❌ 构建失败
+    echo ERROR: Build failed
     echo.
     pause
     exit /b 1
 )
 echo.
 echo ========================================
-echo   ✓ 构建成功！
+echo   Build successful!
 echo ========================================
 echo.
-echo 生成的文件：
-dir main.js | findstr main.js
+echo Generated file:
+if exist main.js (
+    echo [OK] main.js created
+) else (
+    echo [WARNING] main.js not found
+)
 echo.
-echo 下一步：
-echo 1. 将 main.js 和 manifest.json 复制到你的 Obsidian vault
-echo 2. 路径：你的vault\.obsidian\plugins\obsidian-ai-agent\
-echo 3. 在 Obsidian 设置中启用插件
+echo Next steps:
+echo 1. Copy main.js and manifest.json to your Obsidian vault
+echo 2. Path: your-vault\.obsidian\plugins\obsidian-ai-agent\
+echo 3. Enable the plugin in Obsidian settings
 echo.
-echo 按任意键退出...
+echo Press any key to exit...
 pause >nul
