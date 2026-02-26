@@ -29,6 +29,7 @@ export interface AIRequest {
 // AI 响应
 export interface AIResponse {
   content: string;
+  suggestedTitle?: string; // AI 生成的建议标题
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -110,6 +111,7 @@ export interface AIAgentSettings {
   hotkeyShowPanel: string; // 显示面板的快捷键
   hotkeyStopAI: string; // 停止AI的快捷键
   defaultRoleTemplateId: string; // 默认角色模板 ID
+  autoRewriteTitle: boolean; // 自动重写笔记标题
 }
 
 // 快捷键配置

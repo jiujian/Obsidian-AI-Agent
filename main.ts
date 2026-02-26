@@ -85,7 +85,8 @@ const DEFAULT_SETTINGS: AIAgentSettings = {
   hotkeyProcessFile: 'mod+shift+f',
   hotkeyShowPanel: '',
   hotkeyStopAI: 'escape',
-  defaultRoleTemplateId: ''
+  defaultRoleTemplateId: '',
+  autoRewriteTitle: true
 };
 
 export default class AIAgentPlugin extends Plugin {
@@ -231,14 +232,19 @@ export default class AIAgentPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    
+
     // 确保模板的 enabled 字段存在（兼容旧版本）
     this.settings.promptTemplates.forEach(template => {
       if (template.enabled === undefined) {
         template.enabled = true;
       }
     });
-    
+
+    // 确保自动重写标题字段存在（兼容旧版本）
+    if (this.settings.autoRewriteTitle === undefined) {
+      this.settings.autoRewriteTitle = true;
+    }
+
     this.callLogs = this.settings.enableLogging ? [] : [];
   }
 
@@ -329,7 +335,8 @@ export default class AIAgentPlugin extends Plugin {
         expandedPrompt,
         content,
         this.settings.defaultProvider,
-        this.settings.defaultModel
+        this.settings.defaultModel,
+        true // 生成标题
       );
 
       // 关闭加载提示
@@ -358,9 +365,38 @@ export default class AIAgentPlugin extends Plugin {
 
       // 插入响应
       await this.insertResponse(response.content, source, content);
-      
+
+      // 自动重写笔记标题（使用 AI 生成的标题）
+      if (this.settings.autoRewriteTitle && activeFile && response.suggestedTitle) {
+        try {
+          // 清理标题中的引号
+          const quotesToRemove = ['"', "'", '"', '\'', '`', '\u300C', '\u300D', '\u3010', '\u3011', '\u300E', '\u300F'];
+          let cleanTitle = response.suggestedTitle;
+          for (const quote of quotesToRemove) {
+            cleanTitle = cleanTitle.startsWith(quote) ? cleanTitle.slice(1) : cleanTitle;
+            cleanTitle = cleanTitle.endsWith(quote) ? cleanTitle.slice(0, -1) : cleanTitle;
+          }
+          cleanTitle = cleanTitle.trim();
+
+          // 限制长度
+          if (cleanTitle.length > 50) {
+            cleanTitle = cleanTitle.substring(0, 50);
+          }
+
+          console.log('AI 建议标题:', cleanTitle, '原标题:', activeFile.basename);
+
+          if (cleanTitle && cleanTitle !== activeFile.basename) {
+            await this.app.fileManager.renameFile(activeFile, `${cleanTitle}.md`);
+            new Notice(`标题已更新为: ${cleanTitle}`);
+          }
+        } catch (error) {
+          console.error('重写标题失败:', error);
+          // 标题重写失败不影响主流程，静默处理
+        }
+      }
+
       new Notice('AI 处理完成');
-      
+
       // 成功完成，确保不会有AbortError
       return;
     } catch (error) {
@@ -396,9 +432,15 @@ export default class AIAgentPlugin extends Plugin {
   }
 
   // 调用 AI
-  async callAI(prompt: string, content: string, provider: AIProviderType, modelId: string) {
+  async callAI(prompt: string, content: string, provider: AIProviderType, modelId: string, includeTitle: boolean = false) {
+    // 如果需要生成标题，在 prompt 末尾附加标题生成指令
+    let finalPrompt = prompt;
+    if (includeTitle && this.settings.autoRewriteTitle) {
+      finalPrompt = prompt + '\n\n【重要】请先在回复的最开始用"【标题建议】"标签给出一个简洁的笔记标题建议（不超过20个字），然后正常回复内容。标题应该简洁、准确、概括核心内容。格式示例：【标题建议】JavaScript编程技巧\n\n然后是你的正常回复内容。';
+    }
+
     const request: AIRequest = {
-      prompt,
+      prompt: finalPrompt,
       content,
       modelId,
       provider,
@@ -432,7 +474,19 @@ export default class AIAgentPlugin extends Plugin {
         throw new Error(`不支持的提供商: ${provider}`);
     }
 
-    return await providerInstance.call(request);
+    const response = await providerInstance.call(request);
+
+    // 如果需要标题，尝试从响应中提取
+    if (includeTitle && response.content) {
+      const titleMatch = response.content.match(/【标题建议】([^\n]+)/);
+      if (titleMatch && titleMatch[1]) {
+        response.suggestedTitle = titleMatch[1].trim();
+        // 从响应内容中移除标题建议部分
+        response.content = response.content.replace(/【标题建议】[^\n]+\n*/g, '').trim();
+      }
+    }
+
+    return response;
   }
 
   // 插入 AI 响应
@@ -480,9 +534,9 @@ export default class AIAgentPlugin extends Plugin {
   // 记录调用日志
   logCall(call: CallLog) {
     if (!this.settings.enableLogging) return;
-    
+
     this.callLogs.push(call);
-    
+
     // 只保留最近 100 条记录
     if (this.callLogs.length > 100) {
       this.callLogs = this.callLogs.slice(-100);
@@ -1092,7 +1146,8 @@ class AIPanelModal extends Modal {
         expandedPrompt,
         content,
         plugin.settings.defaultProvider,
-        plugin.settings.defaultModel
+        plugin.settings.defaultModel,
+        true // 生成标题
       );
 
       // 关闭加载提示
@@ -1124,9 +1179,38 @@ class AIPanelModal extends Modal {
 
       // 插入响应
       await plugin.insertResponse(response.content, source || 'selection', content);
-      
+
+      // 自动重写笔记标题（使用 AI 生成的标题）
+      if (plugin.settings.autoRewriteTitle && activeFile && response.suggestedTitle) {
+        try {
+          // 清理标题中的引号
+          const quotesToRemove = ['"', "'", '"', '\'', '`', '\u300C', '\u300D', '\u3010', '\u3011', '\u300E', '\u300F'];
+          let cleanTitle = response.suggestedTitle;
+          for (const quote of quotesToRemove) {
+            cleanTitle = cleanTitle.startsWith(quote) ? cleanTitle.slice(1) : cleanTitle;
+            cleanTitle = cleanTitle.endsWith(quote) ? cleanTitle.slice(0, -1) : cleanTitle;
+          }
+          cleanTitle = cleanTitle.trim();
+
+          // 限制长度
+          if (cleanTitle.length > 50) {
+            cleanTitle = cleanTitle.substring(0, 50);
+          }
+
+          console.log('AI 建议标题:', cleanTitle, '原标题:', activeFile.basename);
+
+          if (cleanTitle && cleanTitle !== activeFile.basename) {
+            await plugin.app.fileManager.renameFile(activeFile, `${cleanTitle}.md`);
+            new Notice(`标题已更新为: ${cleanTitle}`);
+          }
+        } catch (error) {
+          console.error('重写标题失败:', error);
+          // 标题重写失败不影响主流程，静默处理
+        }
+      }
+
       new Notice('AI 处理完成');
-      
+
       // 成功完成，确保不会有AbortError
       return;
     } catch (error) {
@@ -1624,6 +1708,16 @@ class AIAgentSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.enableLogging)
         .onChange(async (value) => {
           this.plugin.settings.enableLogging = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('自动重写笔记标题')
+      .setDesc('AI 回写完成后，根据笔记内容自动修改笔记标题。如果中途中断则不修改标题。')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.autoRewriteTitle)
+        .onChange(async (value) => {
+          this.plugin.settings.autoRewriteTitle = value;
           await this.plugin.saveSettings();
         }));
   }
