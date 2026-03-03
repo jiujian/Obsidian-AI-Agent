@@ -367,7 +367,7 @@ export default class AIAgentPlugin extends Plugin {
       await this.insertResponse(response.content, source, content);
 
       // 自动重写笔记标题（使用 AI 生成的标题）
-      if (this.settings.autoRewriteTitle && activeFile && response.suggestedTitle) {
+      if (this.settings.autoRewriteTitle && response.suggestedTitle) {
         try {
           // 清理标题中的引号
           const quotesToRemove = ['"', "'", '"', '\'', '`', '\u300C', '\u300D', '\u3010', '\u3011', '\u300E', '\u300F'];
@@ -383,11 +383,27 @@ export default class AIAgentPlugin extends Plugin {
             cleanTitle = cleanTitle.substring(0, 50);
           }
 
-          console.log('AI 建议标题:', cleanTitle, '原标题:', activeFile.basename);
+          // 重新获取当前文件引用，确保引用有效
+          const currentFile = this.app.workspace.getActiveFile();
+          if (!currentFile) {
+            console.error('无法获取当前文件引用');
+            return;
+          }
 
-          if (cleanTitle && cleanTitle !== activeFile.basename) {
-            await this.app.fileManager.renameFile(activeFile, `${cleanTitle}.md`);
+          console.log('AI 建议标题:', cleanTitle, '当前文件:', currentFile.path);
+
+          // 检查标题是否需要更改
+          if (cleanTitle && cleanTitle !== currentFile.basename) {
+            // 构建新路径，保留原文件所在的目录
+            const parentPath = currentFile.parent?.path === '/' ? '' : currentFile.parent?.path;
+            const newPath = parentPath ? `${parentPath}/${cleanTitle}.md` : `${cleanTitle}.md`;
+            
+            console.log('开始重命名文件:', currentFile.path, '->', newPath);
+            await this.app.fileManager.renameFile(currentFile, newPath);
+            console.log('文件重命名成功');
             new Notice(`标题已更新为: ${cleanTitle}`);
+          } else {
+            console.log('标题无需更改或标题为空');
           }
         } catch (error) {
           console.error('重写标题失败:', error);
@@ -1181,7 +1197,7 @@ class AIPanelModal extends Modal {
       await plugin.insertResponse(response.content, source || 'selection', content);
 
       // 自动重写笔记标题（使用 AI 生成的标题）
-      if (plugin.settings.autoRewriteTitle && activeFile && response.suggestedTitle) {
+      if (plugin.settings.autoRewriteTitle && response.suggestedTitle) {
         try {
           // 清理标题中的引号
           const quotesToRemove = ['"', "'", '"', '\'', '`', '\u300C', '\u300D', '\u3010', '\u3011', '\u300E', '\u300F'];
@@ -1197,11 +1213,27 @@ class AIPanelModal extends Modal {
             cleanTitle = cleanTitle.substring(0, 50);
           }
 
-          console.log('AI 建议标题:', cleanTitle, '原标题:', activeFile.basename);
+          // 重新获取当前文件引用，确保引用有效
+          const currentFile = plugin.app.workspace.getActiveFile();
+          if (!currentFile) {
+            console.error('无法获取当前文件引用');
+            return;
+          }
 
-          if (cleanTitle && cleanTitle !== activeFile.basename) {
-            await plugin.app.fileManager.renameFile(activeFile, `${cleanTitle}.md`);
+          console.log('AI 建议标题:', cleanTitle, '当前文件:', currentFile.path);
+
+          // 检查标题是否需要更改
+          if (cleanTitle && cleanTitle !== currentFile.basename) {
+            // 构建新路径，保留原文件所在的目录
+            const parentPath = currentFile.parent?.path === '/' ? '' : currentFile.parent?.path;
+            const newPath = parentPath ? `${parentPath}/${cleanTitle}.md` : `${cleanTitle}.md`;
+            
+            console.log('开始重命名文件:', currentFile.path, '->', newPath);
+            await plugin.app.fileManager.renameFile(currentFile, newPath);
+            console.log('文件重命名成功');
             new Notice(`标题已更新为: ${cleanTitle}`);
+          } else {
+            console.log('标题无需更改或标题为空');
           }
         } catch (error) {
           console.error('重写标题失败:', error);
